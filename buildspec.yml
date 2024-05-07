@@ -19,7 +19,7 @@ phases:
       - echo Build started on `date`
       - sam build
       - sam package --output-template-file template-export.yml --image-repository $ECR_Repo --s3-bucket $S3_BUCKET
-      - sam deploy --debug --no-confirm-changeset --template-file template-export.yml --stack-name $STACK_NAME --image-repositories virusscannerfn=$ECR_Repo --s3-bucket $S3_BUCKET --capabilities CAPABILITY_NAMED_IAM --parameter-overrides "GITRepo=$GITRepo ECR_Repo=$ECR_Repo S3Buckets=$S3Buckets SecretName=$SecretName SecretKey=$SecretKey PreferredAction=$PreferredAction SNSTopic=$SNSTopic"
+      - sam deploy --debug --no-confirm-changeset --template-file template-export.yml --stack-name $STACK_NAME --image-repositories virusscannerfn=$ECR_Repo --s3-bucket $S3_BUCKET --capabilities CAPABILITY_NAMED_IAM --parameter-overrides "GITRepo=$GITRepo ECR_Repo=$ECR_Repo S3Buckets=$S3Buckets PreferredAction=$PreferredAction SNSTopic=$SNSTopic"
 
 artifacts:
   files:

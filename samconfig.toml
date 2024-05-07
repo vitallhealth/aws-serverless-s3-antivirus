@@ -1,7 +1,7 @@
 version = 0.1
 [default.deploy.parameters]
 stack_name = "antivirus-s3"
-resolve_s3 = true
+resolve_s3 = false
 s3_prefix = "antivirus-s3"
 region = "ca-central-1"
 confirm_changeset = true
