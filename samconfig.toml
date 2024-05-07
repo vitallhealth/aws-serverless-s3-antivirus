@@ -1,0 +1,10 @@
+version = 0.1
+[default.deploy.parameters]
+stack_name = "antivirus-s3"
+resolve_s3 = true
+s3_prefix = "antivirus-s3"
+region = "ca-central-1"
+confirm_changeset = true
+capabilities = "CAPABILITY_NAMED_IAM"
+parameter_overrides = "PreferredAction=\"Tag\" ECRRepo=\"699253540666.dkr.ecr.ca-central-1.amazonaws.com/clamav-scanner\" GITRepo=\"https://github.com/vitallhealth/aws-serverless-s3-antivirus.git\" S3Buckets=\"vitall-ap-prod-reports-26d8175,vitall-ap-prod-uploads-295a68b,vitall-ap-staging-reports-ed2f2c0,vitall-ap-staging-uploads-3312070,vitall-engage-prod-uploads,vitall-engage-staging-uploads,fhir-service-prod-fhirbinarybucket-15i49l57wkd5n,fhir-service-staging-fhirbinarybucket-1d9p56ijg7pe6,discern-api-production-bucket-dcf6b68,discern-api-staging-bucket-a6bf362\" SNSTopic=\"arn:aws:sns:ca-central-1:699253540666:Security-Notifications\""
+image_repositories = ["virusscannerfn=699253540666.dkr.ecr.ca-central-1.amazonaws.com/antiviruss3817f08ce/virusscannerfn2be80708repo"]
