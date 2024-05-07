@@ -1,11 +1,8 @@
 import boto3
 import os
-import sys
 import subprocess
-import uuid
-from urllib.parse import unquote_plus
 
-s3_client = boto3.client('s3')
+s3_client = boto3.client("s3")
 
 
 def lambda_handler(event, context):
@@ -13,30 +10,28 @@ def lambda_handler(event, context):
     key = None
 
     try:
-        bucket = event['detail']['requestParameters']['bucketName']
-        key = event['detail']['requestParameters']['key']
-        file_name = '/tmp/' + key.split('/')[-1]
+        bucket = event["detail"]["requestParameters"]["bucketName"]
+        key = event["detail"]["requestParameters"]["key"]
+        file_name = "/tmp/" + key.split("/")[-1]
 
         # Updating the object's scan status to in progress
         tag_response = s3_client.put_object_tagging(
             Bucket=bucket,
             Key=key,
             # versionId=version,
-            Tagging={'TagSet': [
-                {
-                    'Key': 'ScanStatus',
-                    'Value': 'InProgress'
-                }
-            ]})
+            Tagging={"TagSet": [{"Key": "ScanStatus", "Value": "InProgress"}]},
+        )
 
         s3_client.download_file(bucket, key, file_name)
 
-        scan_cmd = 'clamscan --quiet ' + file_name
-        sp = subprocess.Popen(scan_cmd,
-                                shell=True,
-                                stdout=subprocess.PIPE,
-                                stderr=subprocess.PIPE,
-                                universal_newlines=True)
+        scan_cmd = "clamscan --quiet " + file_name
+        sp = subprocess.Popen(
+            scan_cmd,
+            shell=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            universal_newlines=True,
+        )
 
         out, err = sp.communicate()
 
@@ -67,63 +62,68 @@ def lambda_handler(event, context):
                 Bucket=bucket,
                 Key=key,
                 # versionId=version,
-                Tagging={'TagSet': [
-                    {
-                        'Key': 'ScanStatus',
-                        'Value': 'Completed'
-                    },
-                    {
-                        'Key': 'Tainted',
-                        'Value': 'No'
-                    },
-                ]})
+                Tagging={
+                    "TagSet": [
+                        {"Key": "ScanStatus", "Value": "Completed"},
+                        {"Key": "Tainted", "Value": "No"},
+                    ]
+                },
+            )
         elif return_code == 1:
-            preferredAction = os.environ.get('preferredAction')
-            print("Infected file found. Performing '" +
-                    preferredAction + "' action on the file...")
+            preferredAction = os.environ.get("preferredAction")
+            print(
+                "Infected file found. Performing '"
+                + preferredAction
+                + "' action on the file..."
+            )
 
             if preferredAction == "Delete":
-                delete_response = s3_client.delete_object(Bucket=bucket,
-                                                            Key=key,
-                                                            # VersionId=version
-                                                            )
-                print(
-                    "Deleting the infected file. Response: " + str(delete_response))
+                delete_response = s3_client.delete_object(
+                    Bucket=bucket,
+                    Key=key,
+                    # VersionId=version
+                )
+                print("Deleting the infected file. Response: " + str(delete_response))
             else:
                 tag_response = s3_client.put_object_tagging(
                     Bucket=bucket,
                     Key=key,
                     # versionId=version,
-                    Tagging={'TagSet': [
-                        {
-                            'Key': 'ScanStatus',
-                            'Value': 'Completed'
-                        },
-                        {
-                            'Key': 'Tainted',
-                            'Value': 'Yes'
-                        },
-                    ]})
+                    Tagging={
+                        "TagSet": [
+                            {"Key": "ScanStatus", "Value": "Completed"},
+                            {"Key": "Tainted", "Value": "Yes"},
+                        ]
+                    },
+                )
 
-                print("Tagging the infected file. Response: " +
-                        str(tag_response))
+                print("Tagging the infected file. Response: " + str(tag_response))
+            # Deliver notification to SNS topic
+            sns_client = boto3.client("sns")
+            sns_topic_arn = os.environ.get("snsTopicArn")
+            if bool(sns_topic_arn):
+                try:
+                    print(f"Sending SNS notification to {sns_topic_arn}.")
+                    response = sns_client.publish(
+                        TopicArn=sns_topic_arn,
+                        Message=f"Infected file found: s3://{bucket}/{key}",
+                    )
+                    print(f"Sent SNS notification. MessageId: {response['MessageId']}")
+                except Exception as e:
+                    print(f"Failed to send SNS notification. Error: {e}")
         else:
-            print(
-                f"Unknown error occured while scanning the {key} for viruses.")
+            print(f"Unknown error occured while scanning the {key} for viruses.")
             tag_response = s3_client.put_object_tagging(
                 Bucket=bucket,
                 Key=key,
                 # versionId=version,
-                Tagging={'TagSet': [
-                    {
-                        'Key': 'ScanStatus',
-                        'Value': 'Error'
-                    },
-                    {
-                        'Key': 'Tainted',
-                        'Value': 'Unknown'
-                    },
-                ]})
+                Tagging={
+                    "TagSet": [
+                        {"Key": "ScanStatus", "Value": "Error"},
+                        {"Key": "Tainted", "Value": "Unknown"},
+                    ]
+                },
+            )
 
     except:
         print(f"Unknown error occured while scanning the {key} for viruses.")
@@ -131,13 +131,10 @@ def lambda_handler(event, context):
             Bucket=bucket,
             Key=key,
             # versionId=version,
-            Tagging={'TagSet': [
-                {
-                    'Key': 'ScanStatus',
-                    'Value': 'Error'
-                },
-                {
-                    'Key': 'Tainted',
-                    'Value': 'Unknown'
-                },
-            ]})
+            Tagging={
+                "TagSet": [
+                    {"Key": "ScanStatus", "Value": "Error"},
+                    {"Key": "Tainted", "Value": "Unknown"},
+                ]
+            },
+        )
