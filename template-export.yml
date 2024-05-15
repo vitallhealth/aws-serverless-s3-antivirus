@@ -1,6 +1,7 @@
-AWSTemplateFormatVersion: '2010-09-09'
+AWSTemplateFormatVersion: "2010-09-09"
 Transform: AWS::Serverless-2016-10-31
-Description: An AWS Lambda application to keep your S3 buckets safe from viruses using
+Description:
+  An AWS Lambda application to keep your S3 buckets safe from viruses using
   ClamAV Open Source software. **WARNING** This template creates a SAM application
   and related resources. You will be billed for the AWS resources used if you create
   a stack from this template.
@@ -22,9 +23,10 @@ Parameters:
   PreferredAction:
     Type: String
     AllowedValues:
-    - Delete
-    - Tag
-    Description: Choose "Delete" if you want to delete the infected file. Or "Tag"
+      - Delete
+      - Tag
+    Description:
+      Choose "Delete" if you want to delete the infected file. Or "Tag"
       to assign a tag but keep the file.
     Default: Delete
   ECRRepo:
@@ -35,13 +37,15 @@ Parameters:
     Description: Enter the URL of your git repository. e.g., https://github.com/your_user_name/quickstart-clamav.git
   S3Buckets:
     Type: CommaDelimitedList
-    Description: Enter your S3 bucket names to be scanned separated by commas. e.g.,
+    Description:
+      Enter your S3 bucket names to be scanned separated by commas. e.g.,
       bucket1,bucket2
   SNSTopic:
     Type: String
-    Description: Enter the SNS Topic ARN where notifications about infected files
+    Description:
+      Enter the SNS Topic ARN where notifications about infected files
       will be delivered
-    Default: ''
+    Default: ""
 Resources:
   BuildArtifacts:
     Type: AWS::S3::Bucket
@@ -49,8 +53,8 @@ Resources:
     Properties:
       BucketEncryption:
         ServerSideEncryptionConfiguration:
-        - ServerSideEncryptionByDefault:
-            SSEAlgorithm: AES256
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
       VersioningConfiguration:
         Status: Enabled
     Metadata:
@@ -61,58 +65,59 @@ Resources:
       Description: Creating service role in IAM for AWS CodeBuild
       AssumeRolePolicyDocument:
         Statement:
-        - Action: sts:AssumeRole
-          Effect: Allow
-          Principal:
-            Service: codebuild.amazonaws.com
+          - Action: sts:AssumeRole
+            Effect: Allow
+            Principal:
+              Service: codebuild.amazonaws.com
       Path: /
       RoleName:
         Fn::Join:
-        - '-'
-        - - Ref: AWS::StackName
-          - CodeBuild
+          - "-"
+          - - Ref: AWS::StackName
+            - CodeBuild
       Policies:
-      - PolicyName: BuildsDockerImages
-        PolicyDocument:
-          Version: '2012-10-17'
-          Statement:
-          - Effect: Allow
-            Action: '*'
-            Resource: '*'
+        - PolicyName: BuildsDockerImages
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: "*"
+                Resource: "*"
     Metadata:
       SamResourceId: CodeBuildRole
   EventRole:
     Properties:
-      Description: IAM role to allow Amazon CloudWatch Events to trigger AWS CodeBuild
+      Description:
+        IAM role to allow Amazon CloudWatch Events to trigger AWS CodeBuild
         build
       AssumeRolePolicyDocument:
         Statement:
-        - Action: sts:AssumeRole
-          Effect: Allow
-          Principal:
-            Service:
-            - events.amazonaws.com
-          Sid: 1
-      Policies:
-      - PolicyDocument:
-          Statement:
-          - Action:
-            - codebuild:StartBuild
+          - Action: sts:AssumeRole
             Effect: Allow
-            Resource:
-              Fn::GetAtt:
-              - SamCodeBuild
-              - Arn
-        PolicyName:
-          Fn::Join:
-          - '-'
-          - - Ref: AWS::StackName
-            - CloudWatchEventPolicy
+            Principal:
+              Service:
+                - events.amazonaws.com
+            Sid: 1
+      Policies:
+        - PolicyDocument:
+            Statement:
+              - Action:
+                  - codebuild:StartBuild
+                Effect: Allow
+                Resource:
+                  Fn::GetAtt:
+                    - SamCodeBuild
+                    - Arn
+          PolicyName:
+            Fn::Join:
+              - "-"
+              - - Ref: AWS::StackName
+                - CloudWatchEventPolicy
       RoleName:
         Fn::Join:
-        - '-'
-        - - Ref: AWS::StackName
-          - CloudWatchEventRule
+          - "-"
+          - - Ref: AWS::StackName
+            - CloudWatchEventRule
     Type: AWS::IAM::Role
     Metadata:
       SamResourceId: EventRole
@@ -124,11 +129,11 @@ Resources:
       Timeout: 300
       MemorySize: 2048
       Policies:
-      - AWSLambdaBasicExecutionRole
-      - AWSLambda_ReadOnlyAccess
-      - AWSXrayWriteOnlyAccess
-      - AmazonS3FullAccess
-      - AmazonSNSFullAccess
+        - AWSLambdaBasicExecutionRole
+        - AWSLambda_ReadOnlyAccess
+        - AWSXrayWriteOnlyAccess
+        - AmazonS3FullAccess
+        - AmazonSNSFullAccess
       Tracing: Active
       Environment:
         Variables:
@@ -142,14 +147,15 @@ Resources:
           Properties:
             Pattern:
               source:
-              - aws.s3
+                - aws.s3
               detail-type:
-              - AWS API Call via CloudTrail
+                - AWS API Call via CloudTrail
               detail:
                 eventSource:
-                - s3.amazonaws.com
+                  - s3.amazonaws.com
                 eventName:
-                - PutObject
+                  - PutObject
+                  - CopyObject
                 requestParameters:
                   bucketName:
                     Ref: S3Buckets
@@ -166,16 +172,16 @@ Resources:
       Description: Build process for a ClamAV Application deployed using AWS SAM
       ServiceRole:
         Fn::GetAtt:
-        - CodeBuildRole
-        - Arn
+          - CodeBuildRole
+          - Arn
       Artifacts:
         Type: S3
         Location:
           Fn::GetAtt:
-          - BuildArtifacts
-          - Arn
+            - BuildArtifacts
+            - Arn
         Name: code-build-artifacts
-        Path: ''
+        Path: ""
         NamespaceType: NONE
         Packaging: NONE
       Environment:
@@ -184,35 +190,35 @@ Resources:
         Image: aws/codebuild/amazonlinux2-x86_64-standard:2.0
         PrivilegedMode: true
         EnvironmentVariables:
-        - Name: AWS_REGION
-          Value:
-            Ref: AWS::Region
-        - Name: ACCOUNT_ID
-          Value:
-            Ref: AWS::AccountId
-        - Name: STACK_NAME
-          Value:
-            Ref: AWS::StackName
-        - Name: S3_BUCKET
-          Value:
-            Ref: BuildArtifacts
-        - Name: ECR_Repo
-          Value:
-            Ref: ECRRepo
-        - Name: GITRepo
-          Value:
-            Ref: GITRepo
-        - Name: PreferredAction
-          Value:
-            Ref: PreferredAction
-        - Name: SNSTopic
-          Value:
-            Ref: SNSTopic
-        - Name: S3Buckets
-          Value:
-            Fn::Join:
-            - ','
-            - Ref: S3Buckets
+          - Name: AWS_REGION
+            Value:
+              Ref: AWS::Region
+          - Name: ACCOUNT_ID
+            Value:
+              Ref: AWS::AccountId
+          - Name: STACK_NAME
+            Value:
+              Ref: AWS::StackName
+          - Name: S3_BUCKET
+            Value:
+              Ref: BuildArtifacts
+          - Name: ECR_Repo
+            Value:
+              Ref: ECRRepo
+          - Name: GITRepo
+            Value:
+              Ref: GITRepo
+          - Name: PreferredAction
+            Value:
+              Ref: PreferredAction
+          - Name: SNSTopic
+            Value:
+              Ref: SNSTopic
+          - Name: S3Buckets
+            Value:
+              Fn::Join:
+                - ","
+                - Ref: S3Buckets
       Source:
         Location:
           Ref: GITRepo
@@ -221,9 +227,9 @@ Resources:
       Triggers:
         Webhook: true
         FilterGroups:
-        - - Type: EVENT
-            Pattern: PUSH
-            ExcludeMatchedPattern: false
+          - - Type: EVENT
+              Pattern: PUSH
+              ExcludeMatchedPattern: false
       BadgeEnabled: false
       LogsConfig:
         CloudWatchLogs:
@@ -241,20 +247,20 @@ Resources:
       ScheduleExpression: rate(1 day)
       Name:
         Fn::Join:
-        - '-'
-        - - Ref: AWS::StackName
-          - NightlyBuild
+          - "-"
+          - - Ref: AWS::StackName
+            - NightlyBuild
       State: ENABLED
       Targets:
-      - Arn:
-          Fn::GetAtt:
-          - SamCodeBuild
-          - Arn
-        Id: NightlyCheck
-        RoleArn:
-          Fn::GetAtt:
-          - EventRole
-          - Arn
-        Input: '{"buildspecOverride":"buildspec.yml"}'
+        - Arn:
+            Fn::GetAtt:
+              - SamCodeBuild
+              - Arn
+          Id: NightlyCheck
+          RoleArn:
+            Fn::GetAtt:
+              - EventRole
+              - Arn
+          Input: '{"buildspecOverride":"buildspec.yml"}'
     Metadata:
       SamResourceId: NightlyEvent
