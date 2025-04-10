@@ -91,10 +91,24 @@ An AWS SAM application to keep your S3 objects safe from viruses using ClamAV Op
   - Once in the console, open the CodeBuild project [and add a VPC](https://docs.aws.amazon.com/codebuild/latest/userguide/vpc-support.html)
   - Click Validate VPC Settings to confirm there is internet connectivity
 
-#### **Error -** Build fails with message like _Failed to call ImportSourceCredentials, reason: Token is required (Service: AWSCodeBuild; Status code: 400; Error Code: InvalidInputException; Request ID: xxx; Proxy: null)_
+#### `Failed to call ImportSourceCredentials, reason: Token is required (Service: AWSCodeBuild; Status code: 400; Error Code: InvalidInputException; Request ID: xxx; Proxy: null)`
 
 - **Solution -**
   - Ensure you have provided valid secret name and secret key for `SecretName` and `SecretKey`. You can lookup parameters in CloudFormation console -> Click on virusscanner stack -> Click on Parameters
+
+#### `Error: Building image for virusscannerfn requires Docker. is Docker running?`
+
+- **Try**
+
+```
+export DOCKER_HOST=$(docker context inspect | jq -r '.[0].Endpoints.docker.Host')
+```
+
+- Some recent docker desktop installations have a "resource saver" setting. If this error persists, try disabling it.
+
+#### `fatal error: runtime: bsdthread_register error`
+
+If you see this following error, you need to remove AWS SAM and reinstall it. [Guide](https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/install-sam-cli.html)
 
 ## Limitations
 
