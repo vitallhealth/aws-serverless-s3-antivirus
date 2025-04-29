@@ -1,1 +1,2 @@
 aws-xray-sdk==2.4.3
+python-magic==0.4.27

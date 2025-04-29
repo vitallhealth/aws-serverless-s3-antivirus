@@ -5,6 +5,10 @@ import logging
 import os
 import subprocess
 from pathlib import Path
+import magic
+from urllib import parse
+
+s3_client = boto3.client("s3")
 
 PDFID_PATH = "/opt/pdfid/pdfid.py"
 
@@ -45,7 +49,34 @@ ALLOWED_UPLOAD_ARGS = [
     "ChecksumSHA256",
 ]
 
-s3_client = boto3.client("s3")
+ALLOWED_MIME_TYPES = {
+    "jpeg": "image/jpeg",
+    "jpg": "image/jpeg",
+    "png": "image/png",
+    "pdf": "application/pdf",
+    "xml": "application/xml",
+    "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "zip": "application/zip",
+}
+
+
+def is_valid_file(file_name: str) -> bool:
+    if not os.path.isfile(file_name):
+        raise FileNotFoundError(f"File not found: {file_name}")
+
+    # Extract extension
+    ext = os.path.splitext(file_name)[1].lower().lstrip(".")
+    expected_mime = ALLOWED_MIME_TYPES.get(ext)
+
+    if expected_mime is None:
+        return False  # Extension not in whitelist
+
+    # Detect actual mime type
+    mime = magic.Magic(mime=True)
+    detected_mime = mime.from_file(file_name)
+
+    return detected_mime == expected_mime
 
 
 def scan_pdf(path: str) -> bool:
@@ -108,10 +139,10 @@ def sanitize_pdf(input_path: str, output_path: str) -> None:
         raise result.stderr
 
 
-def upload_file(
+def replace_file(
     file_name: str, bucket: str, object_name: str = None, ExtraArgs: dict = None
 ) -> bool:
-    """Upload a file to an S3 bucket
+    """Upload a file to an S3 bucket. Should be used to replace an existing file with a new one
 
     :param file_name: File to upload
     :param bucket: Bucket to upload to
@@ -123,19 +154,31 @@ def upload_file(
     if object_name is None:
         object_name = os.path.basename(file_name)
 
+    # Get existing object tagging
+    try:
+        response = s3_client.get_object_tagging(Bucket=bucket, Key=object_name)
+        tags = {tag["Key"]: tag["Value"] for tag in response.get("TagSet", [])}
+    except:
+        tags = {}
+
+    print(f"Replacing {bucket}/{object_name}...")
+    tagging = parse.urlencode(tags)
+    print(f"Tags are {tagging}")
+
     # Upload the file
     s3_client = boto3.client("s3")
     try:
         response = s3_client.upload_file(
-            file_name, bucket, object_name, ExtraArgs=ExtraArgs
+            file_name, bucket, object_name, ExtraArgs={**ExtraArgs, "Tagging": tagging}
         )
+        print(f"Replaced {bucket}/{object_name}...")
     except ClientError as e:
         logging.error(e)
         return False
     return True
 
 
-def notify_about_tainted_file(bucket: str, key: str) -> None:
+def notify_about_tainted_file(bucket: str, key: str, status: str = "Infected") -> None:
     """Send a notification about a tainted file
 
     :param bucket: S3 Bucket where the tainted file is located
@@ -148,7 +191,7 @@ def notify_about_tainted_file(bucket: str, key: str) -> None:
             print(f"Sending SNS notification to {sns_topic_arn}.")
             response = sns_client.publish(
                 TopicArn=sns_topic_arn,
-                Message=f"Infected file found: s3://{bucket}/{key}",
+                Message=f"{status} file found: s3://{bucket}/{key}",
             )
             print(f"Sent SNS notification. MessageId: {response['MessageId']}")
         except Exception as e:
@@ -162,8 +205,28 @@ def lambda_handler(event, context):
 
     try:
         bucket = event["detail"]["requestParameters"]["bucketName"]
+        is_staging = "staging" in bucket
         key = event["detail"]["requestParameters"]["key"]
         file_name = "/tmp/" + key.split("/")[-1]
+        print(f"Scanning {bucket}/{key}...")
+
+        try:
+            response = s3_client.head_object(Bucket=bucket, Key=key)
+        except:
+            print(f"{bucket}/{key} does not exist. Skipping.")
+            return
+
+        # Check existing tags
+        try:
+            response = s3_client.get_object_tagging(Bucket=bucket, Key=key)
+            tags = {tag["Key"]: tag["Value"] for tag in response.get("TagSet", [])}
+        except:
+            tags = {}
+
+        if tags.get("ScanStatus") != None:
+            print(f"Skipping {bucket}/{key} - already processed.")
+            return
+        print(f"Processing {bucket}/{key}")
 
         # Updating the object's scan status to in progress
         tag_response = s3_client.put_object_tagging(
@@ -177,15 +240,19 @@ def lambda_handler(event, context):
 
         head_response = s3_client.head_object(Bucket=bucket, Key=key)
         content_type = head_response["ContentType"]
+        is_pdf = content_type == "application/pdf"
 
-        ### PDF specific logic for sanitization ###
-        if content_type == "application/pdf":
+        suspicious = False
+        extra_args = {}
+
+        ###* PDF specific logic for sanitization ###
+        if is_pdf:
             input_pdf = Path(file_name)
             output_pdf = input_pdf.with_name(
                 f"{input_pdf.stem}_sanitized.pdf"
             )  # Location of sanitized file to create
 
-            scan_pdf(
+            suspicious = scan_pdf(
                 input_pdf
             )  # Detects suspicious (non-virus) content. Nothing more. Could use for additional tagging at end of process
             sanitize_pdf(input_pdf, output_pdf)  # Creates a new PDF at output_pdf
@@ -194,9 +261,6 @@ def lambda_handler(event, context):
             extra_args = {
                 k: v for k, v in head_response.items() if k in ALLOWED_UPLOAD_ARGS
             }
-            upload_file(
-                output_pdf, bucket, key, ExtraArgs=extra_args
-            )  # Replace file in bucket with sanitized one
             # Set file_name to sanitized one, continue with scan
             file_name = output_pdf
 
@@ -212,24 +276,32 @@ def lambda_handler(event, context):
         out, err = sp.communicate()
 
         # * clamscan return values (documented from man clamscan)
-        # *  0 : No virus found.
-        # *  1 : Virus(es) found.
-        # * 40: Unknown option passed.
-        # * 50: Database initialization error.
-        # * 52: Not supported file type.
-        # * 53: Can't open directory.
-        # * 54: Can't open file. (ofm)
-        # * 55: Error reading file. (ofm)
-        # * 56: Can't stat input file / directory.
-        # * 57: Can't get absolute path name of current working directory.
-        # * 58: I/O error, please check your file system.
-        # * 62: Can't initialize logger.
-        # * 63: Can't create temporary files/directories (check permissions).
-        # * 64: Can't write to temporary directory (please specify another one).
-        # * 70: Can't allocate memory (calloc).
-        # * 71: Can't allocate memory (malloc).
+        #  0 : No virus found.
+        #  1 : Virus(es) found.
+        # 40: Unknown option passed.
+        # 50: Database initialization error.
+        # 52: Not supported file type.
+        # 53: Can't open directory.
+        # 54: Can't open file. (ofm)
+        # 55: Error reading file. (ofm)
+        # 56: Can't stat input file / directory.
+        # 57: Can't get absolute path name of current working directory.
+        # 58: I/O error, please check your file system.
+        # 62: Can't initialize logger.
+        # 63: Can't create temporary files/directories (check permissions).
+        # 64: Can't write to temporary directory (please specify another one).
+        # 70: Can't allocate memory (calloc).
+        # 71: Can't allocate memory (malloc).
 
         return_code = sp.wait()
+
+        # * Check file extension vs. file content ###
+        is_valid = is_valid_file(file_name)
+        # Not valid, suspicious, and not already flagged as infected
+        if not is_valid or suspicious and return_code != 1:
+            print("SUSPICIOUS: Extension does not correspond to file's mime type")
+            # Set return code to non 0 or 1 to tag as "Unknown". It is suspicious if extension doesn't match mime type
+            return_code = 2
 
         if return_code == 0:
             print("Clean file found, updating the object with scan status tags...")
@@ -274,6 +346,7 @@ def lambda_handler(event, context):
                 )
 
                 print("Tagging the infected file. Response: " + str(tag_response))
+
             # Deliver notifications about the tainted file
             notify_about_tainted_file(bucket, key)
         else:
@@ -284,11 +357,17 @@ def lambda_handler(event, context):
                 # versionId=version,
                 Tagging={
                     "TagSet": [
-                        {"Key": "ScanStatus", "Value": "Error"},
+                        {"Key": "ScanStatus", "Value": "Completed"},
                         {"Key": "Tainted", "Value": "Unknown"},
                     ]
                 },
             )
+            notify_about_tainted_file(bucket, key, "Suspicious")
+
+        if is_pdf and is_staging:
+            replace_file(
+                output_pdf, bucket, key, ExtraArgs=extra_args
+            )  # Replace file in bucket with sanitized one
 
     except Exception as e:
         print(f"Unknown error occured while scanning the {key} for viruses.")
