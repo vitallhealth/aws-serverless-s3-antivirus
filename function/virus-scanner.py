@@ -139,6 +139,25 @@ def sanitize_pdf(input_path: str, output_path: str) -> None:
         raise result.stderr
 
 
+def get_object_tagging(bucket: str, key: str):
+    # Get existing object tagging
+    try:
+        response = s3_client.get_object_tagging(Bucket=bucket, Key=key)
+        tags = {tag["Key"]: tag["Value"] for tag in response.get("TagSet", [])}
+    except:
+        tags = {}
+    return tags
+
+
+def put_object_tagging(bucket: str, key: str, new_tags: dict, old_tags: dict):
+    # Only overwrite new tags, preserve old ones
+    merged_tags = {**old_tags, **new_tags}
+
+    # Put tag set
+    tag_set = [{"Key": k, "Value": v} for k, v in merged_tags.items()]
+    s3_client.put_object_tagging(Bucket=bucket, Key=key, Tagging={"TagSet": tag_set})
+
+
 def replace_file(
     file_name: str, bucket: str, object_name: str = None, ExtraArgs: dict = None
 ) -> bool:
@@ -155,11 +174,7 @@ def replace_file(
         object_name = os.path.basename(file_name)
 
     # Get existing object tagging
-    try:
-        response = s3_client.get_object_tagging(Bucket=bucket, Key=object_name)
-        tags = {tag["Key"]: tag["Value"] for tag in response.get("TagSet", [])}
-    except:
-        tags = {}
+    tags = get_object_tagging(bucket, object_name)
 
     print(f"Replacing {bucket}/{object_name}...")
     tagging = parse.urlencode(tags)
@@ -217,24 +232,15 @@ def lambda_handler(event, context):
             return
 
         # Check existing tags
-        try:
-            response = s3_client.get_object_tagging(Bucket=bucket, Key=key)
-            tags = {tag["Key"]: tag["Value"] for tag in response.get("TagSet", [])}
-        except:
-            tags = {}
+        old_tags = get_object_tagging(bucket, key)
 
-        if tags.get("ScanStatus") != None:
+        if old_tags.get("ScanStatus") != None:
             print(f"Skipping {bucket}/{key} - already processed.")
             return
         print(f"Processing {bucket}/{key}")
 
         # Updating the object's scan status to in progress
-        tag_response = s3_client.put_object_tagging(
-            Bucket=bucket,
-            Key=key,
-            # versionId=version,
-            Tagging={"TagSet": [{"Key": "ScanStatus", "Value": "InProgress"}]},
-        )
+        tag_response = put_object_tagging(bucket, key, {"ScanStatus": "InProgress"})
 
         s3_client.download_file(bucket, key, file_name)
 
@@ -252,9 +258,10 @@ def lambda_handler(event, context):
                 f"{input_pdf.stem}_sanitized.pdf"
             )  # Location of sanitized file to create
 
-            suspicious = scan_pdf(
+            all_good = scan_pdf(
                 input_pdf
             )  # Detects suspicious (non-virus) content. Nothing more. Could use for additional tagging at end of process
+            suspicious = not all_good
             sanitize_pdf(input_pdf, output_pdf)  # Creates a new PDF at output_pdf
 
             # Copy metadata from original file
@@ -306,16 +313,10 @@ def lambda_handler(event, context):
         if return_code == 0:
             print("Clean file found, updating the object with scan status tags...")
             # Update tags with scan status
-            tag_response = s3_client.put_object_tagging(
-                Bucket=bucket,
-                Key=key,
-                # versionId=version,
-                Tagging={
-                    "TagSet": [
-                        {"Key": "ScanStatus", "Value": "Completed"},
-                        {"Key": "Tainted", "Value": "No"},
-                    ]
-                },
+            tag_response = put_object_tagging(
+                bucket,
+                key,
+                {"ScanStatus": "Completed", "Tainted": "No"},
             )
         elif return_code == 1:
             preferredAction = os.environ.get("preferredAction")
@@ -333,16 +334,10 @@ def lambda_handler(event, context):
                 )
                 print("Deleting the infected file. Response: " + str(delete_response))
             else:
-                tag_response = s3_client.put_object_tagging(
-                    Bucket=bucket,
-                    Key=key,
-                    # versionId=version,
-                    Tagging={
-                        "TagSet": [
-                            {"Key": "ScanStatus", "Value": "Completed"},
-                            {"Key": "Tainted", "Value": "Yes"},
-                        ]
-                    },
+                tag_response = put_object_tagging(
+                    bucket,
+                    key,
+                    {"ScanStatus": "Completed", "Tainted": "Yes"},
                 )
 
                 print("Tagging the infected file. Response: " + str(tag_response))
@@ -351,16 +346,10 @@ def lambda_handler(event, context):
             notify_about_tainted_file(bucket, key)
         else:
             print(f"Unknown error occured while scanning the {key} for viruses.")
-            tag_response = s3_client.put_object_tagging(
-                Bucket=bucket,
-                Key=key,
-                # versionId=version,
-                Tagging={
-                    "TagSet": [
-                        {"Key": "ScanStatus", "Value": "Completed"},
-                        {"Key": "Tainted", "Value": "Unknown"},
-                    ]
-                },
+            tag_response = put_object_tagging(
+                bucket,
+                key,
+                {"ScanStatus": "Completed", "Tainted": "Unknown"},
             )
             notify_about_tainted_file(bucket, key, "Suspicious")
 
@@ -372,14 +361,8 @@ def lambda_handler(event, context):
     except Exception as e:
         print(f"Unknown error occured while scanning the {key} for viruses.")
         logging.error(e)
-        tag_response = s3_client.put_object_tagging(
-            Bucket=bucket,
-            Key=key,
-            # versionId=version,
-            Tagging={
-                "TagSet": [
-                    {"Key": "ScanStatus", "Value": "Error"},
-                    {"Key": "Tainted", "Value": "Unknown"},
-                ]
-            },
+        tag_response = put_object_tagging(
+            bucket,
+            key,
+            {"ScanStatus": "Error", "Tainted": "Unknown"},
         )
